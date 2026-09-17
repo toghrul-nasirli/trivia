@@ -16,7 +16,7 @@ locally: the export is parsed by a Python script and the result is a single
 
 4. Open `dist/index.html` in a browser, or AirDrop / send it to a phone and open it there.
 
-Requires Python 3.8+, no dependencies.
+Requires Python 3.8+, no dependencies (encryption is pure standard library).
 
 ## Rounds
 
@@ -52,6 +52,22 @@ Random rounds quote real messages. To keep certain topics out, create
 `data/exclude.txt` with one word or phrase per line. Any message containing one of
 them is never shown in the game. Lines starting with `#` are ignored.
 
+## Publishing (GitHub Pages)
+
+A Pages site is public at a predictable URL, so never publish the plain build.
+Build with a passphrase instead; the question data is then AES-256-GCM encrypted
+and the page asks for the passphrase before it shows anything:
+
+```bash
+python3 build.py data/_chat.txt --rename "toghrul=Toğrul" --password "your passphrase" --out dist/public/index.html
+```
+
+Put that `index.html` on the `gh-pages` branch. The workflow in that branch
+(`.github/workflows/pages.yml`) deploys it to GitHub Pages on every push. The
+passphrase is remembered for the browser session only.
+
+The plain build (no `--password`) is for opening the file directly on a phone.
+
 ## Options
 
 ```
@@ -61,6 +77,7 @@ python3 build.py data/_chat.txt
     --custom data/custom_questions.json
     --exclude data/exclude.txt
     --seed 7                       reproducible question pools
+    --password "..."               encrypt the data; page asks for it on open
 ```
 
 ## Export format

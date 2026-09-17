@@ -115,6 +115,9 @@
   .facts { padding-left: 18px; margin: 0; }
   .foot { text-align: center; color: var(--muted); font-size: 12px; margin-top: 20px; }
   .hidden { display: none !important; }
+  .pw { width: 100%; font-size: 18px; padding: 14px 16px; border-radius: 14px; border: 1.5px solid var(--line); background: var(--bg2); color: var(--text); outline: none; }
+  .pw:focus { border-color: var(--accent); }
+  .help.bad { color: var(--bad); font-weight: 700; }
   @media (max-width: 380px) { h1 { font-size: 28px; } .q { font-size: 20px; } }
 </style>
 </head>
@@ -132,8 +135,19 @@
     </div>
   </div>
 
+  <!-- UNLOCK (only when the data is encrypted) -->
+  <section class="screen" id="unlock">
+    <h1><span data-i18n="lockTitle">Şifrəli oyun</span> <span class="heart">🔒</span></h1>
+    <p class="sub" data-i18n="lockSub">Bu səhifə ictimaidir, amma suallar şifrəlidir. Parolu daxil et.</p>
+    <div class="card">
+      <input class="pw" id="pwInput" type="password" autocomplete="current-password" data-i18n-ph="lockPh" placeholder="Parol">
+      <p class="help bad hidden" id="pwError" data-i18n="lockWrong">Parol səhvdir.</p>
+      <button class="btn" id="pwBtn" data-i18n="lockBtn" style="margin-top:12px">Aç</button>
+    </div>
+  </section>
+
   <!-- START -->
-  <section class="screen active" id="start">
+  <section class="screen" id="start">
     <h1><span id="titleNames"></span> <span class="heart">♥</span></h1>
     <p class="sub" data-i18n="tagline">Söhbətimizdən çıxan suallar. Bir-birimizi nə qədər tanıyırıq?</p>
 
@@ -212,7 +226,7 @@
 </div>
 
 <script>
-const DATA = /*__QUIZ_DATA__*/null;
+let DATA = /*__QUIZ_DATA__*/null;
 
 const I18N = {
   az: {
@@ -225,6 +239,7 @@ const I18N = {
     question: "Sual", answers: "cavab verir", correct: "Doğru!", wrong: "Səhv.", correctAnswer: "Doğru cavab:",
     winner: "qalib gəldi!", tie: "Bərabərlik!", coopTitle: "Nəticəniz", of: "/", noMissed: "Heç bir səhv yoxdur. Bir-birinizi əzbər bilirsiniz.",
     range: "{from} — {to}", built: "Söhbət ixracından yerli olaraq yaradılıb. Heç bir məlumat heç yerə göndərilmir.",
+    lockTitle: "Şifrəli oyun", lockSub: "Bu səhifə ictimaidir, amma suallar şifrəlidir. Parolu daxil et.", lockPh: "Parol", lockWrong: "Parol səhvdir.", lockBtn: "Aç", lockBusy: "Açılır…",
     kinds: { stats: "Statistika", who: "Kim yazıb?", blank: "Boşluğu doldur", reply: "Cavab nə olub?", word: "Bu söz kimindir?", day: "Hansı gün olub?", custom: "Xüsusi suallar" },
     verdicts: [
       [90, "Bir-birinizi əzbər bilirsiniz 😍"], [70, "Çox yaxşı tanıyırsınız 💕"], [50, "Pis deyil, amma söhbətləri bir də oxuyun 😅"], [0, "Hmm… bəlkə səsli mesajlara daha çox qulaq asaq? 🙈"]
@@ -240,6 +255,7 @@ const I18N = {
     question: "Question", answers: "answers", correct: "Correct!", wrong: "Wrong.", correctAnswer: "Correct answer:",
     winner: "wins!", tie: "It's a tie!", coopTitle: "Your score", of: "/", noMissed: "No mistakes. You know each other by heart.",
     range: "{from} — {to}", built: "Built locally from a chat export. Nothing is sent anywhere.",
+    lockTitle: "Locked game", lockSub: "This page is public, but the questions are encrypted. Enter the passphrase.", lockPh: "Passphrase", lockWrong: "Wrong passphrase.", lockBtn: "Unlock", lockBusy: "Unlocking…",
     kinds: { stats: "Statistics", who: "Who said it?", blank: "Fill the blank", reply: "What was the reply?", word: "Whose word is it?", day: "Which day was it?", custom: "Custom questions" },
     verdicts: [
       [90, "You know each other by heart 😍"], [70, "You know each other very well 💕"], [50, "Not bad, but maybe re-read the chat 😅"], [0, "Hmm… maybe listen to the voice notes more? 🙈"]
@@ -275,6 +291,8 @@ function savePrefs() {
 function applyLang() {
   document.documentElement.lang = state.lang;
   document.querySelectorAll("[data-i18n]").forEach(el => { const k = el.dataset.i18n; if (T()[k]) el.textContent = T()[k]; });
+  document.querySelectorAll("[data-i18n-ph]").forEach(el => { const k = el.dataset.i18nPh; if (T()[k]) el.placeholder = T()[k]; });
+  if (!DATA || DATA.enc) return;
   document.querySelectorAll("#langSwitch button").forEach(b => b.classList.toggle("on", b.dataset.lang === state.lang));
   $("modeHelp").textContent = state.mode === "turns" ? T().modeTurnsHelp : T().modeCoopHelp;
   $("mRange").textContent = T().range.replace("{from}", txt(DATA.meta.from)).replace("{to}", txt(DATA.meta.to));
@@ -474,11 +492,58 @@ function renderEnd() {
   });
 }
 
+/* ---------- encrypted payload ---------- */
+const b64 = (s) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+async function decrypt(blob, password) {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
+  const key = await crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt: b64(blob.salt), iterations: blob.iter, hash: "SHA-256" },
+    keyMaterial, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+  const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(blob.iv) }, key, b64(blob.ct));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+function initUnlock() {
+  const blob = DATA;
+  const tryUnlock = async () => {
+    const pw = $("pwInput").value;
+    if (!pw) return;
+    $("pwBtn").textContent = T().lockBusy; $("pwBtn").disabled = true; $("pwError").classList.add("hidden");
+    try {
+      DATA = await decrypt(blob, pw);
+      try { sessionStorage.setItem("trivia-pw", pw); } catch (e) {}
+      initStart(); applyLang(); show("start");
+    } catch (e) {
+      $("pwError").classList.remove("hidden");
+      $("pwBtn").textContent = T().lockBtn; $("pwBtn").disabled = false;
+      $("pwInput").select();
+    }
+  };
+  $("pwBtn").onclick = tryUnlock;
+  $("pwInput").addEventListener("keydown", e => { if (e.key === "Enter") tryUnlock(); });
+  show("unlock");
+  let remembered = null;
+  try { remembered = sessionStorage.getItem("trivia-pw"); } catch (e) {}
+  if (remembered) { $("pwInput").value = remembered; tryUnlock(); }
+  else $("pwInput").focus();
+}
+
 /* ---------- boot ---------- */
 if (!DATA) {
   document.body.innerHTML = '<div class="wrap"><div class="card"><h3>No data</h3><p>Run <code>python3 build.py data/_chat.txt</code> to generate dist/index.html.</p></div></div>';
+} else if (DATA.enc) {
+  loadPrefs();
+  document.querySelectorAll("#langSwitch button").forEach(b => b.onclick = () => { state.lang = b.dataset.lang; savePrefs(); applyLang(); });
+  document.querySelectorAll("#themeSwitch button").forEach(b => b.onclick = () => {
+    const cur = document.documentElement.dataset.theme;
+    document.documentElement.dataset.theme = cur === b.dataset.theme ? "" : b.dataset.theme;
+    savePrefs();
+  });
+  applyLang();
+  initUnlock();
 } else {
   loadPrefs();
+  show("start");
   initStart();
   applyLang();
 }

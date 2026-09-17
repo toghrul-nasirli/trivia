@@ -9,7 +9,9 @@ The export is parsed locally, question pools are generated, and everything is
 injected into template/index.html. Nothing leaves your machine.
 """
 import argparse
+import base64
 import collections
+import os
 import datetime as dt
 import json
 import random
@@ -674,6 +676,116 @@ def load_custom(path, display):
 
 
 # ----------------------------------------------------------------------------
+# Encryption (optional): PBKDF2-SHA256 + AES-256-GCM, decrypted in the browser
+# ----------------------------------------------------------------------------
+
+PBKDF2_ITERATIONS = 300_000
+
+
+class AES:
+    """Minimal AES-256 block cipher (encrypt only), enough for GCM. Pure stdlib."""
+    _sbox = None
+
+    @classmethod
+    def _init_tables(cls):
+        if cls._sbox:
+            return
+        sbox = [0] * 256
+        p = q = 1
+        while True:
+            # multiply p by 3, divide q by 3 in GF(2^8)
+            p = p ^ ((p << 1) & 0xFF) ^ (0x1B if p & 0x80 else 0)
+            q ^= q << 1; q ^= q << 2; q ^= q << 4; q &= 0xFF
+            if q & 0x80:
+                q ^= 0x09
+            x = q ^ (q << 1) ^ (q << 2) ^ (q << 3) ^ (q << 4)
+            sbox[p] = (x ^ (x >> 8) ^ 0x63) & 0xFF
+            if p == 1:
+                break
+        sbox[0] = 0x63
+        cls._sbox = sbox
+        cls._xtime = [((b << 1) ^ 0x1B) & 0xFF if b & 0x80 else b << 1 for b in range(256)]
+
+    def __init__(self, key: bytes):
+        self._init_tables()
+        assert len(key) == 32
+        nk, rounds = 8, 14
+        w = [list(key[i:i + 4]) for i in range(0, 32, 4)]
+        rcon = 1
+        for i in range(nk, 4 * (rounds + 1)):
+            t = list(w[i - 1])
+            if i % nk == 0:
+                t = t[1:] + t[:1]
+                t = [self._sbox[b] for b in t]
+                t[0] ^= rcon
+                rcon = self._xtime[rcon]
+            elif i % nk == 4:
+                t = [self._sbox[b] for b in t]
+            w.append([w[i - nk][j] ^ t[j] for j in range(4)])
+        self._rk = [sum(w[4 * r:4 * r + 4], []) for r in range(rounds + 1)]
+        self._rounds = rounds
+
+    def encrypt_block(self, block: bytes) -> bytes:
+        sbox, xt = self._sbox, self._xtime
+        s = [block[i] ^ self._rk[0][i] for i in range(16)]
+        for r in range(1, self._rounds + 1):
+            s = [sbox[b] for b in s]
+            # shift rows (state is column-major: index = 4*col + row)
+            s = [s[(4 * ((i // 4) + (i % 4)) + (i % 4)) % 16] for i in range(16)]
+            if r != self._rounds:
+                out = []
+                for c in range(4):
+                    a0, a1, a2, a3 = s[4 * c:4 * c + 4]
+                    t = a0 ^ a1 ^ a2 ^ a3
+                    out += [a0 ^ t ^ xt[a0 ^ a1], a1 ^ t ^ xt[a1 ^ a2], a2 ^ t ^ xt[a2 ^ a3], a3 ^ t ^ xt[a3 ^ a0]]
+                s = out
+            rk = self._rk[r]
+            s = [s[i] ^ rk[i] for i in range(16)]
+        return bytes(s)
+
+
+def _gf128_mul(x: int, y: int) -> int:
+    r = 0
+    for i in range(127, -1, -1):
+        if (y >> i) & 1:
+            r ^= x
+        x = (x >> 1) ^ (0xE1 << 120) if x & 1 else x >> 1
+    return r
+
+
+def aes_gcm_encrypt(key: bytes, iv: bytes, plaintext: bytes) -> bytes:
+    """AES-256-GCM with a 96-bit IV and no AAD. Returns ciphertext || 16-byte tag."""
+    aes = AES(key)
+    h = int.from_bytes(aes.encrypt_block(bytes(16)), "big")
+    j0 = iv + b"\x00\x00\x00\x01"
+    counter = int.from_bytes(j0, "big")
+    out = bytearray()
+    for i in range(0, len(plaintext), 16):
+        counter = (counter & ~0xFFFFFFFF) | ((counter + 1) & 0xFFFFFFFF)
+        ks = aes.encrypt_block(counter.to_bytes(16, "big"))
+        chunk = plaintext[i:i + 16]
+        out += bytes(a ^ b for a, b in zip(chunk, ks))
+    # GHASH over ciphertext (no AAD), then the length block
+    tag = 0
+    for i in range(0, len(out), 16):
+        block = bytes(out[i:i + 16]).ljust(16, b"\x00")
+        tag = _gf128_mul(tag ^ int.from_bytes(block, "big"), h)
+    lengths = (0).to_bytes(8, "big") + (len(out) * 8).to_bytes(8, "big")
+    tag = _gf128_mul(tag ^ int.from_bytes(lengths, "big"), h)
+    tag ^= int.from_bytes(aes.encrypt_block(j0), "big")
+    return bytes(out) + tag.to_bytes(16, "big")
+
+
+def encrypt(plaintext: str, password: str):
+    import hashlib
+    salt, iv = os.urandom(16), os.urandom(12)
+    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PBKDF2_ITERATIONS, dklen=32)
+    ct = aes_gcm_encrypt(key, iv, plaintext.encode("utf-8"))
+    b64 = lambda b: base64.b64encode(b).decode("ascii")
+    return {"enc": True, "salt": b64(salt), "iv": b64(iv), "ct": b64(ct), "iter": PBKDF2_ITERATIONS}
+
+
+# ----------------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------------
 
@@ -687,6 +799,9 @@ def main():
                     help="one word/phrase per line; messages containing them are never quoted")
     ap.add_argument("--rename", action="append", default=[], help='"raw name=Display name"')
     ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--password", default=None,
+                    help="encrypt the question data; the page asks for this passphrase on open "
+                         "(use when publishing the page anywhere public)")
     args = ap.parse_args()
 
     rng = random.Random(args.seed)
@@ -738,7 +853,10 @@ def main():
         "pools": pools,
     }
     template = Path(args.template).read_text(encoding="utf-8")
-    payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
+    payload = json.dumps(data, ensure_ascii=False)
+    if args.password:
+        payload = json.dumps(encrypt(payload, args.password))
+    payload = payload.replace("</", "<\\/")
     html = template.replace("/*__QUIZ_DATA__*/null", payload)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
