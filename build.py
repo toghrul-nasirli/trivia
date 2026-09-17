@@ -584,7 +584,7 @@ def whose_word_questions(rng, wc, names, display):
         other = [o for o in names if o != n][0]
         uniq = [(k, c) for k, c in wc.by[n].most_common(600)
                 if len(k) >= 4 and c >= 12 and wc.by[other][k] <= max(1, c // 15) and is_real_word(k)]
-        for k, c in uniq[:25]:
+        for k, c in uniq[:40]:
             w = wc.spelling(n, k)
             qs.append(mc("word",
                 bi(f"Bu söz kimin lüğətindəndir: «{w}»?", f"Whose vocabulary does this word belong to: “{w}”?"),
@@ -626,7 +626,7 @@ def clean_candidates(msgs, lo=30, hi=120):
     return out
 
 
-def who_said_questions(rng, msgs, names, display, n_each=120):
+def who_said_questions(rng, msgs, names, display, n_each=325):
     cands = clean_candidates(msgs, 35, 130)
     qs = []
     a, b = names
@@ -646,7 +646,7 @@ def who_said_questions(rng, msgs, names, display, n_each=120):
     return qs
 
 
-def blank_questions(rng, msgs, names, display, wc, n=150):
+def blank_questions(rng, msgs, names, display, wc, n=400):
     cands = clean_candidates(msgs, 30, 120)
     total_wc = wc.total
     common = {k for k, _ in total_wc.most_common(40)}
@@ -680,7 +680,7 @@ def blank_questions(rng, msgs, names, display, wc, n=150):
     return qs
 
 
-def reply_questions(rng, msgs, names, display, n=120):
+def reply_questions(rng, msgs, names, display, n=350):
     pairs = []
     for p, q in zip(msgs, msgs[1:]):
         if p["sender"] == q["sender"] or not quotable(p) or not quotable(q):
@@ -712,12 +712,12 @@ def reply_questions(rng, msgs, names, display, n=120):
     return qs
 
 
-def day_questions(rng, msgs, names, display, n=40):
+def day_questions(rng, msgs, names, display, n=100):
     by_day = collections.defaultdict(list)
     for m in msgs:
         if quotable(m) and 25 <= len(m["text"]) <= 110 and "\n" not in m["text"]:
             by_day[m["ts"].date()].append(m)
-    busy = [d for d, ms in by_day.items() if len(ms) >= 40]
+    busy = [d for d, ms in by_day.items() if len(ms) >= 25]
     all_days = sorted(by_day)
     rng.shuffle(busy)
     qs = []
@@ -748,7 +748,7 @@ EMOJI_ONLY_RE = re.compile(
 )
 
 
-def emoji_questions(rng, msgs, names, display, n_each=60):
+def emoji_questions(rng, msgs, names, display, n_each=150):
     """Messages that are nothing but emoji: guess the sender."""
     a, b = names
     qs = []
@@ -872,7 +872,7 @@ def reply_time_bucket(seconds):
     return None  # falls between buckets, skip
 
 
-def reply_time_questions(rng, msgs, names, display, n=80):
+def reply_time_questions(rng, msgs, names, display, n=200):
     pairs = []
     for p, q in zip(msgs, msgs[1:]):
         if p["sender"] == q["sender"] or not quotable(p) or not quotable(q):
