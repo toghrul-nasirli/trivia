@@ -28,6 +28,11 @@ Requires Python 3.8+, no dependencies (encryption is pure standard library).
 | Cavab nə olub? | A message and four real replies, pick the one that was actually sent |
 | Bu söz kimindir? | A word only one of you uses |
 | Hansı gün olub? | Three messages from one day, guess the date |
+| Emoji mesajı | An emoji-only message, guess who sent it |
+| Səsli mesajlar | Voice-note records: busiest day, peak hour, who sends more at night |
+| Cavab sürəti | A message and its reply, guess how long the reply took |
+| Əzizləmə sözləri | Pet names: who says which one more, who said it first |
+| Rekordlar | Longest monologue, day streak, sticker volley, fastest 10 minutes |
 | Xüsusi suallar | Your own hand-written questions |
 
 Questions are drawn randomly from the pools every game, so replays differ.
@@ -42,6 +47,16 @@ own spelling, and reveal texts list the variants that were merged.
 - **Növbə ilə / Take turns**: pass the phone. A question about one person is always
   asked to the other one. Separate scores, a winner at the end.
 - **Birlikdə / Together**: one shared score.
+
+Extras, each toggled on the start screen:
+
+- **Speed round**: 15 seconds per question, a +1 bonus for answering within 5 seconds.
+- **Bet mode**: wager 1 to 3 points before answering; right earns them, wrong loses them.
+- **Sounds**: synthesised right/wrong/winner sounds, no audio files. Confetti for the winner.
+
+**Wrapped** is a separate page with charts: messages and voice notes per month, a
+weekday-by-hour heatmap, "sevirəm" over time, what each person sends, favourite emoji,
+and the busiest days. It uses aggregated counts only, no message text.
 
 UI is in Azerbaijani with an English toggle. Light and dark theme.
 

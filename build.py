@@ -739,6 +739,351 @@ def day_questions(rng, msgs, names, display, n=40):
     return qs
 
 
+# ----------------------------------------------------------------------------
+# Extra rounds
+# ----------------------------------------------------------------------------
+
+EMOJI_ONLY_RE = re.compile(
+    "^[\U0001F300-\U0001FAFF\U0001F900-\U0001F9FF\U0001F1E6-\U0001F1FF☀-➿❤⭐⭕️‍⃣\U0001F3FB-\U0001F3FF\s]+$"
+)
+
+
+def emoji_questions(rng, msgs, names, display, n_each=60):
+    """Messages that are nothing but emoji: guess the sender."""
+    a, b = names
+    qs = []
+    for n in names:
+        pool = [m for m in msgs if m["sender"] == n and m["kind"] == "text" and EMOJI_ONLY_RE.match(m["text"])
+                and 1 <= len(EMOJI_RE.findall(m["text"])) <= 12]
+        # dedupe identical strings, prefer varied ones
+        seen, uniq = set(), []
+        for m in pool:
+            key = m["text"].replace("️", "")
+            if key not in seen:
+                seen.add(key)
+                uniq.append(m)
+        for m in rng.sample(uniq, min(n_each, len(uniq))):
+            qs.append(mc("emoji",
+                bi("Bu emoji mesajını kim göndərib?", "Who sent this emoji-only message?"),
+                [bi(display[a], display[a]), bi(display[b], display[b])], 0 if n == a else 1,
+                bi(f"{display[n]}, {az_date(m['ts'].date())}, saat {m['ts'].strftime('%H:%M')}.",
+                   f"{display[n]} on {en_date(m['ts'].date())} at {m['ts'].strftime('%H:%M')}."),
+                context=[{"text": m["text"]}]))
+    rng.shuffle(qs)
+    return qs
+
+
+def voice_questions(rng, msgs, names, display):
+    a, b = names
+    A, B = display[a], display[b]
+    D = {a: A, b: B}
+    qs = []
+    voice = [m for m in msgs if m["kind"] == "audio"]
+    if len(voice) < 50:
+        return qs
+    per_day = collections.Counter(m["ts"].date() for m in voice)
+    top_day, top_n = per_day.most_common(1)[0]
+    qs.append(num_question(rng, "voice",
+        bi(f"{az_date(top_day)} tarixində neçə səsli mesaj göndərmisiniz? (rekord gün)",
+           f"How many voice notes did you send on {en_date(top_day)}, your record day?"),
+        top_n, bi(f"{top_n} səsli mesaj bir gündə.", f"{top_n} voice notes in a single day.")))
+    others = [d for d in per_day if abs((d - top_day).days) > 20]
+    d_opts = [top_day] + rng.sample(others, 3)
+    rng.shuffle(d_opts)
+    qs.append(mc("voice", bi("Ən çox səsli mesaj göndərdiyiniz gün hansıdır?", "On which day did you send the most voice notes?"),
+        [date_opt(d) for d in d_opts], d_opts.index(top_day),
+        bi(f"{az_date(top_day)}: {top_n} səsli mesaj.", f"{en_date(top_day)}: {top_n} voice notes.")))
+
+    per_month = collections.Counter((m["ts"].year, m["ts"].month) for m in voice)
+    tm = per_month.most_common(1)[0][0]
+    m_opts = [tm] + rng.sample([k for k in per_month if k != tm], 3)
+    rng.shuffle(m_opts)
+    qs.append(mc("voice", bi("Hansı ayda ən çox səsli mesaj göndərmisiniz?", "In which month did you send the most voice notes?"),
+        [bi(f"{AZ_MONTHS[mo - 1]} {y}", f"{EN_MONTHS[mo - 1]} {y}") for y, mo in m_opts], m_opts.index(tm),
+        bi(f"{AZ_MONTHS[tm[1] - 1]} {tm[0]}: {per_month[tm]} səsli mesaj.", f"{EN_MONTHS[tm[1] - 1]} {tm[0]}: {per_month[tm]} voice notes.")))
+
+    hours = collections.Counter(m["ts"].hour for m in voice)
+    th = hours.most_common(1)[0][0]
+    h_opts = [th]
+    for h in rng.sample(range(24), 24):
+        if abs(h - th) >= 3 and h not in h_opts:
+            h_opts.append(h)
+        if len(h_opts) == 4:
+            break
+    rng.shuffle(h_opts)
+    qs.append(mc("voice", bi("Səsli mesajlar ən çox hansı saatda gedir?", "At what hour do voice notes peak?"),
+        [bi(f"{h:02d}:00–{(h + 1) % 24:02d}:00", f"{h:02d}:00–{(h + 1) % 24:02d}:00") for h in h_opts], h_opts.index(th),
+        bi(f"{th:02d}:00–{(th + 1) % 24:02d}:00: {hours[th]} səsli mesaj.", f"{th:02d}:00–{(th + 1) % 24:02d}:00: {hours[th]} voice notes.")))
+
+    night = {n: sum(1 for m in voice if m["sender"] == n and m["ts"].hour < 6) for n in names}
+    qs.append(who_question("voice", bi("Gecə 00:00–06:00 arası kim daha çox səsli mesaj atır?", "Who sends more voice notes between midnight and 6 AM?"),
+        (A, B), {A: night[a], B: night[b]}, bi("{a}: {ca}, {b}: {cb}.", "{a}: {ca}, {b}: {cb}.")))
+
+    years = sorted({m["ts"].year for m in voice})
+    for y in years:
+        c = {n: sum(1 for m in voice if m["sender"] == n and m["ts"].year == y) for n in names}
+        if sum(c.values()) >= 100 and c[a] != c[b]:
+            qs.append(who_question("voice", bi(f"{y}-ci ildə kim daha çox səsli mesaj göndərib?", f"Who sent more voice notes in {y}?"),
+                (A, B), {A: c[a], B: c[b]}, bi("{a}: {ca}, {b}: {cb} səsli mesaj.", "{a}: {ca}, {b}: {cb} voice notes.")))
+
+    # longest run of consecutive voice notes with no text in between
+    best = (0, None, None)
+    run, start = 0, None
+    for m in msgs:
+        if m["kind"] == "audio":
+            run += 1
+            start = start or m
+            if run > best[0]:
+                best = (run, start, m)
+        elif m["kind"] in ("text", "sticker", "image", "video"):
+            run, start = 0, None
+    if best[0] >= 5:
+        qs.append(num_question(rng, "voice",
+            bi("Arada heç yazılı mesaj olmadan ard-arda ən çox neçə səsli mesaj gedib?", "What is the longest run of voice notes with no text message in between?"),
+            best[0], bi(f"{best[0]} səsli mesaj ard-arda, {az_date(best[1]['ts'].date())}.", f"{best[0]} voice notes in a row on {en_date(best[1]['ts'].date())}.")))
+
+    share = round(100 * len(voice) / len(msgs))
+    opts = sorted({share, max(1, share - 9), min(95, share + 11), min(96, share + 24)})
+    while len(opts) < 4:
+        opts.append(opts[-1] + 7)
+    qs.append(mc("voice", bi("Bütün mesajların neçə faizi səsli mesajdır?", "What share of all messages are voice notes?"),
+        [bi(f"{o}%", f"{o}%") for o in opts], opts.index(share),
+        bi(f"{share}%: {len(voice)} səsli mesaj.", f"{share}%: {len(voice)} voice notes.")))
+    return qs
+
+
+REPLY_BUCKETS = [
+    (30, bi("30 saniyədən az", "Under 30 seconds")),
+    (5 * 60, bi("1–5 dəqiqə", "1 to 5 minutes")),
+    (60 * 60, bi("10–60 dəqiqə", "10 to 60 minutes")),
+    (10 ** 9, bi("3 saatdan çox", "More than 3 hours")),
+]
+
+
+def reply_time_bucket(seconds):
+    if seconds < 30:
+        return 0
+    if 60 <= seconds <= 5 * 60:
+        return 1
+    if 10 * 60 <= seconds <= 60 * 60:
+        return 2
+    if seconds > 3 * 3600:
+        return 3
+    return None  # falls between buckets, skip
+
+
+def reply_time_questions(rng, msgs, names, display, n=80):
+    pairs = []
+    for p, q in zip(msgs, msgs[1:]):
+        if p["sender"] == q["sender"] or not quotable(p) or not quotable(q):
+            continue
+        if not (15 <= len(p["text"]) <= 110 and 10 <= len(q["text"]) <= 110) or "\n" in p["text"] or "\n" in q["text"]:
+            continue
+        # both ends must look like a question and its answer, not two unrelated messages
+        secs = (q["ts"] - p["ts"]).total_seconds()
+        bucket = reply_time_bucket(secs)
+        if bucket is None or secs > 3 * 86400:
+            continue
+        pairs.append((bucket, secs, p, q))
+    rng.shuffle(pairs)
+    per_bucket = collections.defaultdict(list)
+    for item in pairs:
+        per_bucket[item[0]].append(item)
+    qs = []
+    quota = n // 4
+    for bucket in range(4):
+        for _, secs, p, q in per_bucket[bucket][:quota]:
+            dur = fmt_duration(secs)
+            qs.append(mc("speed",
+                bi(f"{display[q['sender']]} buna nə qədər vaxtdan sonra cavab verib?", f"How long did {display[q['sender']]} take to reply?"),
+                [b[1] for b in REPLY_BUCKETS], bucket,
+                bi(f"{dur['az']}. {az_date(p['ts'].date())}, saat {p['ts'].strftime('%H:%M')} → {q['ts'].strftime('%H:%M')}.",
+                   f"{dur['en']}. {en_date(p['ts'].date())}, {p['ts'].strftime('%H:%M')} → {q['ts'].strftime('%H:%M')}."),
+                about=q["sender"],
+                context=[{"sender": display[p["sender"]], "text": p["text"]}, {"sender": display[q["sender"]], "text": q["text"]}]))
+    rng.shuffle(qs)
+    return qs
+
+
+# Pet names / endearments: (stem to match after normalisation, label shown)
+PET_NAMES = [
+    ("tatlım", "tatlım"), ("tatlum", "tatlum"), ("tatlış", "tatlış"), ("baby", "baby"), ("bebek", "bebek"), ("bebeyim", "bebeyim"),
+    ("canım", "canım"), ("həyatım", "həyatım"), ("ürəyim", "ürəyim"), ("sevgilim", "sevgilim"), ("əzizim", "əzizim"),
+    ("balam", "balam"), ("aşkım", "aşkım"), ("gözəlim", "gözəlim"), ("günəşim", "günəşim"), ("ayım", "ayım"),
+    ("ciyərim", "ciyərim"), ("quzum", "quzum"), ("cırtdan", "cırtdan"), ("şəkərim", "şəkərim"), ("ömrüm", "ömrüm"),
+    ("nəfəsim", "nəfəsim"), ("meleyim", "mələyim"), ("prensesim", "prensesim"), ("yakışıklı", "yakışıklı"),
+]
+
+
+def nickname_questions(rng, msgs, names, display, wc):
+    a, b = names
+    A, B = display[a], display[b]
+    D = {a: A, b: B}
+    texts = [m for m in msgs if m["kind"] == "text"]
+    qs = []
+    found = []
+    for stem, label in PET_NAMES:
+        k = norm(stem)
+        pat = re.compile(r"\b" + re.escape(k) + r"\w*")
+        c = {n: sum(1 for m in texts if m["sender"] == n and pat.search(m.get("norm") or norm_text(m["text"]))) for n in names}
+        if sum(c.values()) >= 8:
+            first = next(m for m in texts if pat.search(m.get("norm") or norm_text(m["text"])))
+            found.append((label, k, c, first))
+    if not found:
+        return qs
+    found.sort(key=lambda f: -sum(f[2].values()))
+    for label, k, c, first in found:
+        if c[a] != c[b] and sum(c.values()) >= 15:
+            qs.append(who_question("nick", bi(f"Kim daha çox «{label}» deyir?", f"Who says “{label}” more?"),
+                (A, B), {A: c[a], B: c[b]},
+                bi("{a}: {ca} dəfə, {b}: {cb} dəfə.", "{a}: {ca} times, {b}: {cb} times.")))
+    # first appearance of the top 3 pet names
+    days = sorted({m["ts"].date() for m in msgs})
+    for label, k, c, first in found[:3]:
+        d = first["ts"].date()
+        d_opts = [d] + rng.sample([x for x in days if abs((x - d).days) > 14], 3)
+        rng.shuffle(d_opts)
+        qs.append(mc("nick", bi(f"«{label}» ilk dəfə nə vaxt yazılıb?", f"When was “{label}” first written?"),
+            [date_opt(x) for x in d_opts], d_opts.index(d),
+            bi(f"{az_date(d)}, yazan: {D[first['sender']]}. Cəmi {sum(c.values())} dəfə işlənib.",
+               f"{en_date(d)}, by {D[first['sender']]}. Used {sum(c.values())} times in total.")))
+        qs.append(mc("nick", bi(f"«{label}» sözünü ilk kim yazıb?", f"Who was first to write “{label}”?"),
+            [bi(A, A), bi(B, B)], 0 if first["sender"] == a else 1,
+            bi(f"{D[first['sender']]}, {az_date(d)}.", f"{D[first['sender']]}, on {en_date(d)}.")))
+    # each person's favourite pet name
+    for n in names:
+        mine = sorted(found, key=lambda f: -f[2][n])
+        if mine and mine[0][2][n] >= 10:
+            top = mine[0][0]
+            distract = [f[0] for f in found if f[0] != top]
+            if len(distract) >= 3:
+                opts = [top] + rng.sample(distract, 3)
+                rng.shuffle(opts)
+                qs.append(mc("nick", bi(f"{D[n]} ən çox hansı əzizləmə sözünü işlədir?", f"Which pet name does {D[n]} use the most?"),
+                    [bi(o, o) for o in opts], opts.index(top),
+                    bi(f"«{top}» — {mine[0][2][n]} dəfə. Sonra: " + ", ".join(f[0] for f in mine[1:4] if f[2][n]),
+                       f"“{top}” — {mine[0][2][n]} times. Then: " + ", ".join(f[0] for f in mine[1:4] if f[2][n])),
+                    about=n))
+    total_pet = sum(sum(f[2].values()) for f in found)
+    qs.append(num_question(rng, "nick", bi("Cəmi neçə dəfə bir-birinizə əzizləmə sözü ilə müraciət etmisiniz?", "How many times have you called each other by a pet name?"),
+        total_pet, bi(f"{total_pet} dəfə, {len(found)} fərqli sözlə.", f"{total_pet} times, using {len(found)} different pet names.")))
+    return qs
+
+
+def streak_questions(rng, msgs, names, display):
+    a, b = names
+    A, B = display[a], display[b]
+    D = {a: A, b: B}
+    qs = []
+    # longest monologue: consecutive messages by one person without any reply
+    best = {n: (0, None) for n in names}
+    run, cur, start = 0, None, None
+    for m in msgs:
+        if m["sender"] == cur:
+            run += 1
+        else:
+            cur, run, start = m["sender"], 1, m
+        if run > best[cur][0]:
+            best[cur] = (run, start)
+    winner = max(names, key=lambda n: best[n][0])
+    qs.append(who_question("streak", bi("Cavab almadan ard-arda ən çox mesajı kim yazıb?", "Who holds the record for consecutive messages without a reply?"),
+        (A, B), {A: best[a][0], B: best[b][0]},
+        bi("{a}: {ca} mesaj ard-arda, {b}: {cb}.", "{a}: {ca} messages in a row, {b}: {cb}.")))
+    n_best, start = best[winner]
+    qs.append(num_question(rng, "streak",
+        bi(f"{D[winner]} ən uzun monoloqunda ard-arda neçə mesaj yazıb?", f"How many messages in a row did {D[winner]} send in their longest monologue?"),
+        n_best, bi(f"{n_best} mesaj, {az_date(start['ts'].date())}, saat {start['ts'].strftime('%H:%M')}-dən başlayaraq.",
+                   f"{n_best} messages, starting {en_date(start['ts'].date())} at {start['ts'].strftime('%H:%M')}."),
+        about=winner))
+    # longest streak of days with messages
+    days = sorted({m["ts"].date() for m in msgs})
+    best_len, cur_len, best_end = 1, 1, days[0]
+    for p, q in zip(days, days[1:]):
+        cur_len = cur_len + 1 if (q - p).days == 1 else 1
+        if cur_len > best_len:
+            best_len, best_end = cur_len, q
+    qs.append(num_question(rng, "streak",
+        bi("Fasiləsiz ən çox neçə gün ard-arda yazışmısınız?", "What is your longest streak of consecutive days with messages?"),
+        best_len, bi(f"{best_len} gün ard-arda, {az_date(best_end - dt.timedelta(days=best_len - 1))} → {az_date(best_end)}.",
+                     f"{best_len} days in a row, {en_date(best_end - dt.timedelta(days=best_len - 1))} → {en_date(best_end)}.")))
+    # longest sticker volley
+    run, start, best_s = 0, None, (0, None)
+    for m in msgs:
+        if m["kind"] == "sticker":
+            run += 1
+            start = start or m
+            if run > best_s[0]:
+                best_s = (run, start)
+        else:
+            run, start = 0, None
+    if best_s[0] >= 4:
+        qs.append(num_question(rng, "streak",
+            bi("Ard-arda ən çox neçə stiker göndərilib?", "What is the longest run of stickers in a row?"),
+            best_s[0], bi(f"{best_s[0]} stiker ard-arda, {az_date(best_s[1]['ts'].date())}.", f"{best_s[0]} stickers in a row on {en_date(best_s[1]['ts'].date())}.")))
+    # fastest back-and-forth: most messages in a single 10-minute window
+    times = [m["ts"] for m in msgs]
+    j, best_w = 0, (0, None)
+    for i in range(len(times)):
+        while times[i] - times[j] > dt.timedelta(minutes=10):
+            j += 1
+        if i - j + 1 > best_w[0]:
+            best_w = (i - j + 1, times[j])
+    qs.append(num_question(rng, "streak",
+        bi("10 dəqiqə ərzində ən çox neçə mesaj yazmısınız?", "What is the most messages you have exchanged in a 10-minute window?"),
+        best_w[0], bi(f"{best_w[0]} mesaj, {az_date(best_w[1].date())}, saat {best_w[1].strftime('%H:%M')}.",
+                      f"{best_w[0]} messages on {en_date(best_w[1].date())} at {best_w[1].strftime('%H:%M')}.")))
+    # longest reply wait that still got a reply within a week, per person
+    for n in names:
+        worst = None
+        for p, q in zip(msgs, msgs[1:]):
+            if q["sender"] == n and p["sender"] != n:
+                d = (q["ts"] - p["ts"]).total_seconds()
+                if d < 7 * 86400 and (worst is None or d > worst[0]):
+                    worst = (d, p, q)
+        if worst and worst[0] > 3600:
+            hrs = worst[0] / 3600
+            opts = sorted({round(hrs), max(1, round(hrs * 0.4)), round(hrs * 1.6), round(hrs * 2.4)})
+            while len(opts) < 4:
+                opts.append(opts[-1] + 6)
+            qs.append(mc("streak",
+                bi(f"{D[n]} bir mesaja ən gec neçə saatdan sonra cavab yazıb?", f"What is the longest {D[n]} has ever taken to reply?"),
+                [bi(f"{o} saat", f"{o} hours") for o in opts], opts.index(round(hrs)),
+                bi(f"{fmt_duration(worst[0])['az']}, {az_date(worst[1]['ts'].date())}.", f"{fmt_duration(worst[0])['en']}, {en_date(worst[1]['ts'].date())}."),
+                about=n))
+    return qs
+
+
+def wrapped_data(msgs, names, display):
+    """Aggregated series for the Wrapped page. No message text, only counts."""
+    a, b = names
+    months = sorted({(m["ts"].year, m["ts"].month) for m in msgs})
+    label = [f"{y}-{mo:02d}" for y, mo in months]
+    per_month = {n: [sum(1 for m in msgs if m["sender"] == n and (m["ts"].year, m["ts"].month) == k) for k in months] for n in names}
+    voice_month = {n: [sum(1 for m in msgs if m["sender"] == n and m["kind"] == "audio" and (m["ts"].year, m["ts"].month) == k) for k in months] for n in names}
+    heat = [[0] * 24 for _ in range(7)]
+    for m in msgs:
+        heat[m["ts"].weekday()][m["ts"].hour] += 1
+    love = [sum(1 for m in msgs if m["kind"] == "text" and (m["ts"].year, m["ts"].month) == k and "sevirem" in norm_text(m["text"])) for k in months]
+    ec = {n: collections.Counter() for n in names}
+    for m in msgs:
+        if m["kind"] == "text":
+            for e in EMOJI_RE.findall(m["text"]):
+                ec[m["sender"]][e] += 1
+    kinds = {n: collections.Counter(m["kind"] for m in msgs if m["sender"] == n) for n in names}
+    days = collections.Counter(m["ts"].date() for m in msgs)
+    return {
+        "months": label,
+        "messages": {display[n]: per_month[n] for n in names},
+        "voice": {display[n]: voice_month[n] for n in names},
+        "heat": heat,
+        "love": love,
+        "emoji": {display[n]: ec[n].most_common(6) for n in names},
+        "kinds": {display[n]: {k: kinds[n][k] for k in ("text", "audio", "sticker", "image", "video", "voice_call", "missed_call")} for n in names},
+        "topDays": [[d.isoformat(), c] for d, c in days.most_common(5)],
+        "activeDays": len(days),
+    }
+
+
 def load_custom(path, display):
     if not path or not Path(path).exists():
         return []
@@ -911,6 +1256,11 @@ def main():
         "blank": blank_questions(rng, msgs, names, display, wc),
         "reply": reply_questions(rng, msgs, names, display),
         "day": day_questions(rng, msgs, names, display),
+        "emoji": emoji_questions(rng, msgs, names, display),
+        "voice": voice_questions(rng, msgs, names, display),
+        "speed": reply_time_questions(rng, msgs, names, display),
+        "nick": nickname_questions(rng, msgs, names, display, wc),
+        "streak": streak_questions(rng, msgs, names, display),
         "custom": load_custom(args.custom, display),
     }
     # 'about' uses raw sender names internally; convert to display names for the app
@@ -930,6 +1280,7 @@ def main():
             "built": dt.date.today().isoformat(),
         },
         "pools": pools,
+        "wrapped": wrapped_data(msgs, names, display),
     }
     template = Path(args.template).read_text(encoding="utf-8")
     payload = json.dumps(data, ensure_ascii=False)
