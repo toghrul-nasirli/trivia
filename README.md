@@ -32,6 +32,11 @@ Requires Python 3.8+, no dependencies (encryption is pure standard library).
 
 Questions are drawn randomly from the pools every game, so replays differ.
 
+Word counts are spelling-insensitive: `günaydın`, `gunaydin` and `günayydin`, or `çox`,
+`chox` and `cox`, count as one word. Azerbaijani letters are folded to plain Latin and
+the `sh`, `ch`, `gh` keyboard spellings are folded too. The game still shows each person's
+own spelling, and reveal texts list the variants that were merged.
+
 ## Modes
 
 - **Növbə ilə / Take turns**: pass the phone. A question about one person is always

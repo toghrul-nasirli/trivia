@@ -28,6 +28,22 @@ WORD_RE = re.compile(r"[a-zA-ZəöüğışçƏÖÜĞİŞÇ]+")
 EMOJI_RE = re.compile("[\U0001F300-\U0001FAFF\U0001F900-\U0001F9FF☀-➿❤]")
 URL_RE = re.compile(r"https?://|www\.")
 
+# Azerbaijani letters typed on an English keyboard: "gunaydin" == "günaydın", "chox" == "çox"
+_FOLD = str.maketrans({"ə": "e", "ı": "i", "ö": "o", "ü": "u", "ğ": "g", "ş": "s", "ç": "c", "\u0307": ""})
+_DIGRAPHS = [("sh", "s"), ("ch", "c"), ("gh", "g")]
+
+
+def norm(word: str) -> str:
+    """Spelling-insensitive key for a word, so both people's spellings count together."""
+    w = word.lower().replace("İ", "i").translate(_FOLD)
+    for a, b in _DIGRAPHS:
+        w = w.replace(a, b)
+    return w
+
+
+def norm_text(text: str) -> str:
+    return norm(text)
+
 MEDIA_MARKERS = {
     "audio": "audio omitted",
     "sticker": "sticker omitted",
@@ -394,18 +410,23 @@ def stats_questions(rng, msgs, names, display):
             total_calls, bi(f"{total_calls} zəng.", f"{total_calls} calls.")))
 
     # Love words
+    for m in texts:
+        m["norm"] = norm_text(m["text"])
+
     def phrase_counts(*variants):
-        return {n: sum(1 for m in texts if m["sender"] == n and any(v in m["text"].lower() for v in variants)) for n in names}
+        keys = [norm(v) for v in variants]
+        return {n: sum(1 for m in texts if m["sender"] == n and any(k in m["norm"] for k in keys)) for n in names}
 
     def first_msg(*variants):
-        return next((m for m in texts if any(v in m["text"].lower() for v in variants)), None)
+        keys = [norm(v) for v in variants]
+        return next((m for m in texts if any(k in m["norm"] for k in keys)), None)
 
-    love = phrase_counts("sevirəm", "sevirem")
+    love = phrase_counts("sevirəm")
     if sum(love.values()) >= 10:
         qs.append(who_question("stats", bi("Kim daha çox «sevirəm» yazıb?", "Who has written “sevirəm” (I love you) more times?"),
             (A, B), {A: love[a], B: love[b]},
             bi("{a}: {ca} dəfə, {b}: {cb} dəfə.", "{a}: {ca} times, {b}: {cb} times.")))
-        fl = first_msg("sevirəm", "sevirem")
+        fl = first_msg("sevirəm")
         d_opts = [fl["ts"].date()]
         pool = [d for d in days if abs((d - fl["ts"].date()).days) > 7]
         d_opts += rng.sample(pool, 3)
@@ -427,7 +448,8 @@ def stats_questions(rng, msgs, names, display):
         ("üzr", "«üzr istəyirəm»", "“üzr…” (apologise)", 6),
         ("yatdın", "«yatdın?»", "“yatdın?” (are you asleep?)", 8),
     ]:
-        c = {n: sum(1 for m in texts if m["sender"] == n and re.search(r"\b" + word, m["text"].lower())) for n in names}
+        pat = re.compile(r"\b" + re.escape(norm(word)))
+        c = {n: sum(1 for m in texts if m["sender"] == n and pat.search(m["norm"])) for n in names}
         if sum(c.values()) >= min_total and c[a] != c[b]:
             qs.append(who_question("stats", bi(f"Kim daha çox {label_az} yazıb?", f"Who has written {label_en} more often?"),
                 (A, B), {A: c[a], B: c[b]},
@@ -476,21 +498,76 @@ def stats_questions(rng, msgs, names, display):
         bi("{a}: orta {ca} simvol, {b}: orta {cb} simvol.", "{a}: {ca} characters on average, {b}: {cb}.")))
 
     # Signature words: how many times did X write their favourite filler
-    wc = {n: collections.Counter() for n in names}
+    wc = WordCounts(names)
     for m in texts:
-        for w in WORD_RE.findall(m["text"].lower()):
+        for w in WORD_RE.findall(m["text"]):
             if len(w) >= 3:
-                wc[m["sender"]][w] += 1
+                wc.add(m["sender"], w)
     for n in names:
         other = [o for o in names if o != n][0]
-        top = [(w, c) for w, c in wc[n].most_common(30) if c >= 3 * max(1, wc[other][w]) and c >= 80]
+        top = [(k, c) for k, c in wc.by[n].most_common(30) if c >= 3 * max(1, wc.by[other][k]) and c >= 80]
         if top:
-            w, c = top[0]
+            k, c = top[0]
+            w = wc.spelling(n, k)
             qs.append(num_question(rng, "stats",
                 bi(f"{D[n]} neçə dəfə «{w}» yazıb?", f"How many times has {D[n]} written “{w}”?"),
-                c, bi(f"{c} dəfə. {D[other]} isə cəmi {wc[other][w]} dəfə.", f"{c} times. {D[other]} only {wc[other][w]} times."),
+                c, bi(f"{c} dəfə{wc.variants_note(k, 'az')}. {D[other]} isə cəmi {wc.by[other][k]} dəfə.",
+                      f"{c} times{wc.variants_note(k, 'en')}. {D[other]} only {wc.by[other][k]} times."),
                 about=n))
+
+    # Who types Azerbaijani letters, who types on an English keyboard
+    az_letters = set("əıöüğşçƏİÖÜĞŞÇ")
+    ascii_share = {}
+    for n in names:
+        mine = [m for m in texts if m["sender"] == n and any(ch.isalpha() for ch in m["text"]) and len(m["text"]) >= 15]
+        plain = sum(1 for m in mine if not (set(m["text"]) & az_letters))
+        ascii_share[n] = round(100 * plain / max(1, len(mine)))
+    if abs(ascii_share[a] - ascii_share[b]) >= 10:
+        qs.append(who_question("stats",
+            bi("Kim daha çox ingilis klaviaturası ilə yazır (ə, ş, ç olmadan)?", "Who types more often without Azerbaijani letters (ə, ş, ç)?"),
+            (A, B), {A: ascii_share[a], B: ascii_share[b]},
+            bi("{a}: mesajların {ca}%-i, {b}: {cb}%-i Azərbaycan hərfləri olmadan yazılıb.",
+               "{a}: {ca}% of messages, {b}: {cb}% written without any Azerbaijani letters.")))
     return qs, wc
+
+
+class WordCounts:
+    """Per-person word counts keyed by normalized spelling, remembering how each person writes it."""
+
+    def __init__(self, names):
+        self.names = names
+        self.by = {n: collections.Counter() for n in names}        # name -> norm -> count
+        self.forms = {n: collections.defaultdict(collections.Counter) for n in names}  # name -> norm -> spelling -> count
+        self.total = collections.Counter()
+
+    def add(self, name, word):
+        k = norm(word)
+        self.by[name][k] += 1
+        self.forms[name][k][word.lower()] += 1
+        self.total[k] += 1
+
+    def spelling(self, name, k):
+        """The way this person most often writes the word."""
+        f = self.forms[name].get(k)
+        if f:
+            return f.most_common(1)[0][0]
+        for n in self.names:
+            if self.forms[n].get(k):
+                return self.forms[n][k].most_common(1)[0][0]
+        return k
+
+    def all_spellings(self, k):
+        c = collections.Counter()
+        for n in self.names:
+            c.update(self.forms[n].get(k, {}))
+        return [w for w, _ in c.most_common()]
+
+    def variants_note(self, k, lang):
+        sp = self.all_spellings(k)
+        if len(sp) < 2:
+            return ""
+        joined = " / ".join(sp[:4])
+        return f" ({joined} birlikdə)" if lang == "az" else f" (counting {joined})"
 
 
 def is_real_word(w):
@@ -505,14 +582,15 @@ def whose_word_questions(rng, wc, names, display):
     qs = []
     for n in names:
         other = [o for o in names if o != n][0]
-        uniq = [(w, c) for w, c in wc[n].most_common(600)
-                if len(w) >= 4 and c >= 12 and wc[other][w] <= max(1, c // 15) and is_real_word(w)]
-        for w, c in uniq[:25]:
+        uniq = [(k, c) for k, c in wc.by[n].most_common(600)
+                if len(k) >= 4 and c >= 12 and wc.by[other][k] <= max(1, c // 15) and is_real_word(k)]
+        for k, c in uniq[:25]:
+            w = wc.spelling(n, k)
             qs.append(mc("word",
                 bi(f"Bu söz kimin lüğətindəndir: «{w}»?", f"Whose vocabulary does this word belong to: “{w}”?"),
                 [bi(A, A), bi(B, B)], 0 if n == a else 1,
-                bi(f"{display[n]} bunu {c} dəfə yazıb, {display[other]} isə {wc[other][w]} dəfə.",
-                   f"{display[n]} wrote it {c} times, {display[other]} {wc[other][w]} times.")))
+                bi(f"{display[n]} bunu {c} dəfə yazıb{wc.variants_note(k, 'az')}, {display[other]} isə {wc.by[other][k]} dəfə.",
+                   f"{display[n]} wrote it {c} times{wc.variants_note(k, 'en')}, {display[other]} {wc.by[other][k]} times.")))
     rng.shuffle(qs)
     return qs
 
@@ -570,22 +648,23 @@ def who_said_questions(rng, msgs, names, display, n_each=120):
 
 def blank_questions(rng, msgs, names, display, wc, n=150):
     cands = clean_candidates(msgs, 30, 120)
-    total_wc = collections.Counter()
-    for c in wc.values():
-        total_wc.update(c)
-    common = {w for w, _ in total_wc.most_common(40)}
+    total_wc = wc.total
+    common = {k for k, _ in total_wc.most_common(40)}
     qs = []
     rng.shuffle(cands)
     for m in cands:
         words = [w for w in WORD_RE.findall(m["text"]) if len(w) >= 5]
-        words = [w for w in words if 3 <= total_wc[w.lower()] <= 400 and w.lower() not in common and is_real_word(w)]
+        words = [w for w in words if 3 <= total_wc[norm(w)] <= 400 and norm(w) not in common and is_real_word(norm(w))]
         if not words:
             continue
         w = rng.choice(words)
         lw = w.lower()
-        freq = total_wc[lw]
-        distract = [x for x, c in wc[m["sender"]].items()
-                    if x != lw and abs(len(x) - len(lw)) <= 2 and freq / 4 <= c <= freq * 4 and len(x) >= 4 and is_real_word(x)]
+        k = norm(w)
+        freq = total_wc[k]
+        sender = m["sender"]
+        distract = [wc.spelling(sender, x) for x, c in wc.by[sender].items()
+                    if x != k and abs(len(x) - len(k)) <= 2 and freq / 4 <= c <= freq * 4 and len(x) >= 4 and is_real_word(x)]
+        distract = [d for d in distract if d != lw]
         if len(distract) < 3:
             continue
         opts = [lw] + rng.sample(distract, 3)
