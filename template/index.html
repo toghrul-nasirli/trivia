@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bizim Trivia</title>
+<meta name="description" content="A two-player trivia game built from our own chat history.">
+<style>
+  :root {
+    --bg: #fbf5f0;
+    --bg2: #f3e7e1;
+    --card: #ffffff;
+    --text: #2b2024;
+    --muted: #7d6a70;
+    --accent: #d9436a;
+    --accent-2: #f2a1b5;
+    --ok: #2f9e6f;
+    --bad: #d24343;
+    --line: #eadbd6;
+    --shadow: 0 10px 30px rgba(80, 30, 45, .10);
+    --p1: #d9436a;
+    --p2: #4c6fe0;
+    --radius: 18px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17121a; --bg2: #221a26; --card: #2a2030; --text: #f6eef1; --muted: #b19aa5;
+      --accent: #ff6b8f; --accent-2: #7a3b52; --ok: #4fc48f; --bad: #ff6f6f; --line: #3a2d3f;
+      --shadow: 0 10px 30px rgba(0,0,0,.35); --p2: #7c98ff;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17121a; --bg2: #221a26; --card: #2a2030; --text: #f6eef1; --muted: #b19aa5;
+    --accent: #ff6b8f; --accent-2: #7a3b52; --ok: #4fc48f; --bad: #ff6f6f; --line: #3a2d3f;
+    --shadow: 0 10px 30px rgba(0,0,0,.35); --p2: #7c98ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: radial-gradient(1200px 600px at 50% -10%, var(--bg2), var(--bg));
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 560px; margin: 0 auto; padding: 20px 16px calc(24px + env(safe-area-inset-bottom)); }
+  .screen { display: none; animation: fade .25s ease; }
+  .screen.active { display: block; }
+  @keyframes fade { from { opacity: 0; transform: translateY(6px);} to { opacity: 1; transform: none; } }
+
+  .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; gap: 8px; }
+  .brand { font-weight: 800; letter-spacing: .3px; font-size: 15px; color: var(--muted); }
+  .pill-group { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--card); }
+  .pill-group button { border: 0; background: transparent; color: var(--muted); padding: 6px 12px; font-size: 13px; font-weight: 700; cursor: pointer; }
+  .pill-group button.on { background: var(--accent); color: #fff; }
+
+  h1 { font-size: 34px; line-height: 1.1; margin: 8px 0 6px; letter-spacing: -.5px; }
+  h1 .heart { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 15px; margin: 0 0 22px; }
+
+  .card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px; margin-bottom: 14px; border: 1px solid var(--line); }
+  .card h3 { margin: 0 0 10px; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip { flex: 1 1 auto; border: 1.5px solid var(--line); background: transparent; color: var(--text); border-radius: 12px; padding: 10px 12px; font-size: 15px; font-weight: 700; cursor: pointer; min-width: 70px; }
+  .chip.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+  .help { color: var(--muted); font-size: 13px; margin: 8px 0 0; line-height: 1.4; }
+
+  .btn { display: block; width: 100%; border: 0; border-radius: 14px; padding: 16px; font-size: 17px; font-weight: 800; cursor: pointer; background: var(--accent); color: #fff; box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 35%, transparent); }
+  .btn:active { transform: translateY(1px); }
+  .btn.ghost { background: transparent; color: var(--accent); box-shadow: none; border: 1.5px solid var(--accent); }
+
+  .meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .meta div { background: var(--bg2); border-radius: 12px; padding: 10px; text-align: center; }
+  .meta b { display: block; font-size: 18px; }
+  .meta span { font-size: 12px; color: var(--muted); }
+
+  /* Question screen */
+  .progress { height: 6px; background: var(--line); border-radius: 999px; overflow: hidden; margin-bottom: 14px; }
+  .progress i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .3s ease; }
+  .turn { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; font-size: 14px; color: var(--muted); }
+  .turn .who { font-weight: 800; padding: 6px 12px; border-radius: 999px; color: #fff; background: var(--p1); }
+  .turn .who.p2 { background: var(--p2); }
+  .badge { display: inline-block; font-size: 12px; font-weight: 800; letter-spacing: .8px; text-transform: uppercase; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); padding: 5px 10px; border-radius: 999px; margin-bottom: 10px; }
+  .q { font-size: 22px; font-weight: 800; line-height: 1.25; margin: 0 0 14px; }
+  .bubbles { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+  .bubble { background: var(--bg2); border-radius: 14px; padding: 10px 14px; font-size: 16px; line-height: 1.4; max-width: 92%; align-self: flex-start; }
+  .bubble .from { display: block; font-size: 12px; font-weight: 800; color: var(--muted); margin-bottom: 2px; }
+  .bubble.anon { align-self: stretch; max-width: 100%; text-align: center; font-size: 18px; padding: 16px; font-style: italic; }
+  .options { display: grid; gap: 10px; }
+  .opt { text-align: left; border: 1.5px solid var(--line); background: var(--card); color: var(--text); border-radius: 14px; padding: 14px 16px; font-size: 16px; font-weight: 600; cursor: pointer; line-height: 1.35; transition: transform .08s ease; }
+  .opt:active { transform: scale(.99); }
+  .opt.correct { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+  .opt.wrong { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }
+  .opt:disabled { cursor: default; opacity: .9; }
+  .reveal { margin-top: 14px; padding: 14px; border-radius: 14px; background: var(--bg2); font-size: 15px; line-height: 1.45; display: none; }
+  .reveal.show { display: block; animation: fade .2s ease; }
+  .reveal b { display: block; margin-bottom: 4px; }
+  .reveal b.ok { color: var(--ok); } .reveal b.bad { color: var(--bad); }
+  .next { margin-top: 12px; display: none; }
+  .next.show { display: block; }
+  .scores { display: flex; gap: 8px; margin-top: 12px; font-size: 13px; color: var(--muted); justify-content: center; }
+  .scores b { color: var(--text); }
+
+  /* Results */
+  .result-hero { text-align: center; padding: 26px 16px; }
+  .result-hero .big { font-size: 56px; line-height: 1; margin-bottom: 8px; }
+  .result-hero h2 { margin: 0 0 6px; font-size: 26px; }
+  .result-hero p { color: var(--muted); margin: 0; }
+  .score-row { display: flex; gap: 10px; }
+  .score-row > div { flex: 1; text-align: center; border-radius: 14px; padding: 14px; color: #fff; }
+  .score-row .p1 { background: var(--p1); } .score-row .p2 { background: var(--p2); }
+  .score-row b { display: block; font-size: 32px; }
+  .score-row span { font-size: 13px; opacity: .9; }
+  .facts li { margin: 6px 0; line-height: 1.4; }
+  .facts { padding-left: 18px; margin: 0; }
+  .foot { text-align: center; color: var(--muted); font-size: 12px; margin-top: 20px; }
+  .hidden { display: none !important; }
+  @media (max-width: 380px) { h1 { font-size: 28px; } .q { font-size: 20px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand" data-i18n="brand">Bizim Trivia</div>
+    <div class="row" style="gap:6px">
+      <div class="pill-group" id="langSwitch">
+        <button data-lang="az" class="on">AZ</button><button data-lang="en">EN</button>
+      </div>
+      <div class="pill-group" id="themeSwitch">
+        <button data-theme="light">☀️</button><button data-theme="dark">🌙</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- START -->
+  <section class="screen active" id="start">
+    <h1><span id="titleNames"></span> <span class="heart">♥</span></h1>
+    <p class="sub" data-i18n="tagline">Söhbətimizdən çıxan suallar. Bir-birimizi nə qədər tanıyırıq?</p>
+
+    <div class="card">
+      <div class="meta">
+        <div><b id="mTotal"></b><span data-i18n="mTotal">mesaj</span></div>
+        <div><b id="mDays"></b><span data-i18n="mDays">gün</span></div>
+        <div><b id="mQs"></b><span data-i18n="mQs">sual bankı</span></div>
+      </div>
+      <p class="help" id="mRange"></p>
+    </div>
+
+    <div class="card">
+      <h3 data-i18n="mode">Rejim</h3>
+      <div class="row" id="modeRow">
+        <button class="chip on" data-mode="turns" data-i18n="modeTurns">Növbə ilə</button>
+        <button class="chip" data-mode="coop" data-i18n="modeCoop">Birlikdə</button>
+      </div>
+      <p class="help" id="modeHelp" data-i18n="modeTurnsHelp">Telefonu növbə ilə bir-birinizə verirsiniz. Bir nəfər haqqında olan sual o biri adama düşür.</p>
+    </div>
+
+    <div class="card">
+      <h3 data-i18n="count">Sual sayı</h3>
+      <div class="row" id="countRow">
+        <button class="chip" data-n="10">10</button>
+        <button class="chip on" data-n="20">20</button>
+        <button class="chip" data-n="30">30</button>
+        <button class="chip" data-n="50">50</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 data-i18n="rounds">Raundlar</h3>
+      <div class="row" id="kindRow"></div>
+      <p class="help" data-i18n="roundsHelp">Hər oyunda suallar təsadüfi seçilir, ona görə hər dəfə fərqli olur.</p>
+    </div>
+
+    <button class="btn" id="startBtn" data-i18n="start">Başla</button>
+    <p class="foot" id="builtNote"></p>
+  </section>
+
+  <!-- QUESTION -->
+  <section class="screen" id="play">
+    <div class="progress"><i id="bar"></i></div>
+    <div class="turn">
+      <span id="counter"></span>
+      <span class="who" id="turnWho"></span>
+    </div>
+    <div class="card">
+      <span class="badge" id="badge"></span>
+      <p class="q" id="qText"></p>
+      <div class="bubbles" id="bubbles"></div>
+      <div class="options" id="options"></div>
+      <div class="reveal" id="reveal"></div>
+      <button class="btn next" id="nextBtn" data-i18n="next">Növbəti</button>
+    </div>
+    <div class="scores" id="liveScores"></div>
+  </section>
+
+  <!-- RESULTS -->
+  <section class="screen" id="end">
+    <div class="card result-hero">
+      <div class="big" id="endEmoji">🏆</div>
+      <h2 id="endTitle"></h2>
+      <p id="endSub"></p>
+    </div>
+    <div class="card" id="endScoresCard">
+      <div class="score-row" id="endScores"></div>
+    </div>
+    <div class="card">
+      <h3 data-i18n="missed">Səhv cavablar</h3>
+      <ul class="facts" id="missedList"></ul>
+    </div>
+    <button class="btn" id="againBtn" data-i18n="again">Yenidən oyna</button>
+  </section>
+</div>
+
+<script>
+const DATA = /*__QUIZ_DATA__*/null;
+
+const I18N = {
+  az: {
+    brand: "Bizim Trivia", tagline: "Söhbətimizdən çıxan suallar. Bir-birimizi nə qədər tanıyırıq?",
+    mTotal: "mesaj", mDays: "gün", mQs: "sual bankı", mode: "Rejim", modeTurns: "Növbə ilə", modeCoop: "Birlikdə",
+    modeTurnsHelp: "Telefonu növbə ilə bir-birinizə verirsiniz. Bir nəfər haqqında olan sual o biri adama düşür.",
+    modeCoopHelp: "Birlikdə cavab verirsiniz, bir ümumi xal.",
+    count: "Sual sayı", rounds: "Raundlar", roundsHelp: "Hər oyunda suallar təsadüfi seçilir, ona görə hər dəfə fərqli olur.",
+    start: "Başla", next: "Növbəti", finish: "Nəticəyə bax", missed: "Səhv cavablar", again: "Yenidən oyna",
+    question: "Sual", answers: "cavab verir", correct: "Doğru!", wrong: "Səhv.", correctAnswer: "Doğru cavab:",
+    winner: "qalib gəldi!", tie: "Bərabərlik!", coopTitle: "Nəticəniz", of: "/", noMissed: "Heç bir səhv yoxdur. Bir-birinizi əzbər bilirsiniz.",
+    range: "{from} — {to}", built: "Söhbət ixracından yerli olaraq yaradılıb. Heç bir məlumat heç yerə göndərilmir.",
+    kinds: { stats: "Statistika", who: "Kim yazıb?", blank: "Boşluğu doldur", reply: "Cavab nə olub?", word: "Bu söz kimindir?", day: "Hansı gün olub?", custom: "Xüsusi suallar" },
+    verdicts: [
+      [90, "Bir-birinizi əzbər bilirsiniz 😍"], [70, "Çox yaxşı tanıyırsınız 💕"], [50, "Pis deyil, amma söhbətləri bir də oxuyun 😅"], [0, "Hmm… bəlkə səsli mesajlara daha çox qulaq asaq? 🙈"]
+    ]
+  },
+  en: {
+    brand: "Our Trivia", tagline: "Questions pulled from our own chat. How well do we really know each other?",
+    mTotal: "messages", mDays: "days", mQs: "question bank", mode: "Mode", modeTurns: "Take turns", modeCoop: "Together",
+    modeTurnsHelp: "Pass the phone back and forth. A question about one person goes to the other.",
+    modeCoopHelp: "Answer together for one shared score.",
+    count: "Questions", rounds: "Rounds", roundsHelp: "Questions are picked randomly each game, so no two games are the same.",
+    start: "Start", next: "Next", finish: "See results", missed: "Wrong answers", again: "Play again",
+    question: "Question", answers: "answers", correct: "Correct!", wrong: "Wrong.", correctAnswer: "Correct answer:",
+    winner: "wins!", tie: "It's a tie!", coopTitle: "Your score", of: "/", noMissed: "No mistakes. You know each other by heart.",
+    range: "{from} — {to}", built: "Built locally from a chat export. Nothing is sent anywhere.",
+    kinds: { stats: "Statistics", who: "Who said it?", blank: "Fill the blank", reply: "What was the reply?", word: "Whose word is it?", day: "Which day was it?", custom: "Custom questions" },
+    verdicts: [
+      [90, "You know each other by heart 😍"], [70, "You know each other very well 💕"], [50, "Not bad, but maybe re-read the chat 😅"], [0, "Hmm… maybe listen to the voice notes more? 🙈"]
+    ]
+  }
+};
+
+const state = {
+  lang: "az", mode: "turns", n: 20, kinds: new Set(),
+  qs: [], i: 0, scores: [0, 0], answered: false, missed: [],
+};
+const T = () => I18N[state.lang];
+const $ = (id) => document.getElementById(id);
+const txt = (v) => (v && typeof v === "object") ? (v[state.lang] || v.az || v.en) : v;
+
+/* ---------- persistence for per-viewer conveniences ---------- */
+function loadPrefs() {
+  try {
+    const p = JSON.parse(localStorage.getItem("trivia-prefs") || "{}");
+    if (p.lang && I18N[p.lang]) state.lang = p.lang;
+    if (p.theme) document.documentElement.dataset.theme = p.theme;
+    if (p.mode) state.mode = p.mode;
+    if (p.n) state.n = p.n;
+  } catch (e) {}
+}
+function savePrefs() {
+  try {
+    localStorage.setItem("trivia-prefs", JSON.stringify({ lang: state.lang, theme: document.documentElement.dataset.theme || "", mode: state.mode, n: state.n }));
+  } catch (e) {}
+}
+
+/* ---------- i18n ---------- */
+function applyLang() {
+  document.documentElement.lang = state.lang;
+  document.querySelectorAll("[data-i18n]").forEach(el => { const k = el.dataset.i18n; if (T()[k]) el.textContent = T()[k]; });
+  document.querySelectorAll("#langSwitch button").forEach(b => b.classList.toggle("on", b.dataset.lang === state.lang));
+  $("modeHelp").textContent = state.mode === "turns" ? T().modeTurnsHelp : T().modeCoopHelp;
+  $("mRange").textContent = T().range.replace("{from}", txt(DATA.meta.from)).replace("{to}", txt(DATA.meta.to));
+  $("builtNote").textContent = T().built;
+  renderKindChips();
+  if ($("play").classList.contains("active")) renderQuestion(true);
+  if ($("end").classList.contains("active")) renderEnd();
+}
+
+/* ---------- start screen ---------- */
+function renderKindChips() {
+  const row = $("kindRow");
+  row.innerHTML = "";
+  Object.keys(DATA.pools).forEach(k => {
+    if (!DATA.pools[k].length) return;
+    const b = document.createElement("button");
+    b.className = "chip" + (state.kinds.has(k) ? " on" : "");
+    b.textContent = `${T().kinds[k] || k} · ${DATA.pools[k].length}`;
+    b.onclick = () => { state.kinds.has(k) ? state.kinds.delete(k) : state.kinds.add(k); if (!state.kinds.size) state.kinds.add(k); renderKindChips(); };
+    row.appendChild(b);
+  });
+}
+function initStart() {
+  $("titleNames").textContent = DATA.players.join(" & ");
+  $("mTotal").textContent = DATA.meta.total.toLocaleString("en").replace(/,/g, " ");
+  $("mDays").textContent = DATA.meta.days;
+  $("mQs").textContent = Object.values(DATA.pools).reduce((s, p) => s + p.length, 0);
+  Object.keys(DATA.pools).forEach(k => { if (DATA.pools[k].length) state.kinds.add(k); });
+  document.querySelectorAll("#modeRow .chip").forEach(b => {
+    b.classList.toggle("on", b.dataset.mode === state.mode);
+    b.onclick = () => { state.mode = b.dataset.mode; document.querySelectorAll("#modeRow .chip").forEach(x => x.classList.toggle("on", x === b)); $("modeHelp").textContent = state.mode === "turns" ? T().modeTurnsHelp : T().modeCoopHelp; savePrefs(); };
+  });
+  document.querySelectorAll("#countRow .chip").forEach(b => {
+    b.classList.toggle("on", +b.dataset.n === state.n);
+    b.onclick = () => { state.n = +b.dataset.n; document.querySelectorAll("#countRow .chip").forEach(x => x.classList.toggle("on", x === b)); savePrefs(); };
+  });
+  $("startBtn").onclick = startGame;
+  $("againBtn").onclick = () => show("start");
+  $("nextBtn").onclick = nextQuestion;
+  document.querySelectorAll("#langSwitch button").forEach(b => b.onclick = () => { state.lang = b.dataset.lang; savePrefs(); applyLang(); });
+  document.querySelectorAll("#themeSwitch button").forEach(b => b.onclick = () => {
+    const cur = document.documentElement.dataset.theme;
+    document.documentElement.dataset.theme = cur === b.dataset.theme ? "" : b.dataset.theme;
+    savePrefs();
+  });
+}
+
+/* ---------- game ---------- */
+function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+
+function pickQuestions() {
+  // Take a proportional share from each selected pool, then shuffle.
+  const kinds = [...state.kinds].filter(k => DATA.pools[k].length);
+  const weights = { stats: 3, who: 3, blank: 2, reply: 2, word: 1.5, day: 1.5, custom: 4 };
+  const totalW = kinds.reduce((s, k) => s + (weights[k] || 1), 0);
+  let picked = [];
+  const leftovers = [];
+  kinds.forEach(k => {
+    const pool = shuffle(DATA.pools[k].slice());
+    const want = Math.max(1, Math.round(state.n * (weights[k] || 1) / totalW));
+    picked.push(...pool.slice(0, want));
+    leftovers.push(...pool.slice(want));
+  });
+  shuffle(picked);
+  if (picked.length > state.n) picked = picked.slice(0, state.n);
+  else if (picked.length < state.n) picked.push(...shuffle(leftovers).slice(0, state.n - picked.length));
+  // In turns mode, a question about person X must be answered by the other one.
+  // Alternate the rest so turns stay balanced.
+  let flip = Math.random() < 0.5 ? 0 : 1;
+  picked.forEach(q => {
+    const idx = DATA.players.indexOf(q.about);
+    if (idx >= 0) q._player = 1 - idx; else { q._player = flip; flip = 1 - flip; }
+  });
+  return picked;
+}
+
+function startGame() {
+  state.qs = pickQuestions();
+  state.i = 0; state.scores = [0, 0]; state.missed = [];
+  show("play");
+  renderQuestion();
+}
+
+function show(id) {
+  document.querySelectorAll(".screen").forEach(s => s.classList.toggle("active", s.id === id));
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
+
+function renderQuestion(rerenderOnly) {
+  const q = state.qs[state.i];
+  if (!q) return;
+  if (!rerenderOnly) state.answered = false;
+  $("bar").style.width = `${(state.i / state.qs.length) * 100}%`;
+  $("counter").textContent = `${T().question} ${state.i + 1} ${T().of} ${state.qs.length}`;
+  const who = $("turnWho");
+  if (state.mode === "turns") {
+    who.textContent = `${DATA.players[q._player]} ${T().answers}`;
+    who.className = "who" + (q._player === 1 ? " p2" : "");
+    who.classList.remove("hidden");
+  } else who.classList.add("hidden");
+  $("badge").textContent = T().kinds[q.kind] || q.kind;
+  $("qText").textContent = txt(q.q);
+
+  const bubbles = $("bubbles");
+  bubbles.innerHTML = "";
+  (q.context || []).forEach(c => {
+    const d = document.createElement("div");
+    d.className = "bubble" + (c.sender ? "" : " anon");
+    if (c.sender) { const f = document.createElement("span"); f.className = "from"; f.textContent = c.sender; d.appendChild(f); }
+    d.appendChild(document.createTextNode(c.text));
+    bubbles.appendChild(d);
+  });
+
+  const opts = $("options");
+  opts.innerHTML = "";
+  q.options.forEach((o, idx) => {
+    const b = document.createElement("button");
+    b.className = "opt";
+    b.textContent = txt(o);
+    if (state.answered) {
+      b.disabled = true;
+      if (idx === q.answer) b.classList.add("correct");
+      else if (idx === q._chosen) b.classList.add("wrong");
+    } else b.onclick = () => answer(idx);
+    opts.appendChild(b);
+  });
+  renderReveal(q);
+  $("nextBtn").textContent = state.i === state.qs.length - 1 ? T().finish : T().next;
+  $("nextBtn").classList.toggle("show", state.answered);
+  renderLiveScores();
+}
+
+function renderReveal(q) {
+  const r = $("reveal");
+  if (!state.answered) { r.classList.remove("show"); r.innerHTML = ""; return; }
+  const ok = q._chosen === q.answer;
+  r.innerHTML = "";
+  const b = document.createElement("b"); b.className = ok ? "ok" : "bad";
+  b.textContent = ok ? T().correct : `${T().wrong} ${T().correctAnswer} ${txt(q.options[q.answer])}`;
+  r.appendChild(b);
+  r.appendChild(document.createTextNode(txt(q.reveal) || ""));
+  r.classList.add("show");
+}
+
+function answer(idx) {
+  if (state.answered) return;
+  const q = state.qs[state.i];
+  state.answered = true;
+  q._chosen = idx;
+  const ok = idx === q.answer;
+  if (ok) state.scores[state.mode === "turns" ? q._player : 0]++;
+  else state.missed.push(q);
+  renderQuestion(true);
+  if (navigator.vibrate) navigator.vibrate(ok ? 20 : [40, 40, 40]);
+}
+
+function nextQuestion() {
+  if (state.i >= state.qs.length - 1) { $("bar").style.width = "100%"; show("end"); renderEnd(); return; }
+  state.i++;
+  renderQuestion();
+}
+
+function renderLiveScores() {
+  const s = $("liveScores");
+  if (state.mode === "turns") s.innerHTML = `<span><b>${esc(DATA.players[0])}</b> ${state.scores[0]}</span><span>·</span><span><b>${esc(DATA.players[1])}</b> ${state.scores[1]}</span>`;
+  else s.innerHTML = `<span><b>${state.scores[0]}</b> ${T().of} ${state.i + (state.answered ? 1 : 0)}</span>`;
+}
+
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+function renderEnd() {
+  const n = state.qs.length;
+  const total = state.scores[0] + state.scores[1];
+  const pct = Math.round(100 * total / n);
+  const verdict = T().verdicts.find(v => pct >= v[0])[1];
+  if (state.mode === "turns") {
+    const [a, b] = state.scores;
+    if (a === b) { $("endEmoji").textContent = "🤝"; $("endTitle").textContent = T().tie; }
+    else { $("endEmoji").textContent = "🏆"; $("endTitle").textContent = `${DATA.players[a > b ? 0 : 1]} ${T().winner}`; }
+    $("endSub").textContent = verdict;
+    $("endScores").innerHTML = `<div class="p1"><b>${a}</b><span>${esc(DATA.players[0])}</span></div><div class="p2"><b>${b}</b><span>${esc(DATA.players[1])}</span></div>`;
+    $("endScoresCard").classList.remove("hidden");
+  } else {
+    $("endEmoji").textContent = pct >= 70 ? "💞" : "💌";
+    $("endTitle").textContent = `${T().coopTitle}: ${total} ${T().of} ${n}`;
+    $("endSub").textContent = verdict;
+    $("endScoresCard").classList.add("hidden");
+  }
+  const ul = $("missedList");
+  ul.innerHTML = "";
+  if (!state.missed.length) { const li = document.createElement("li"); li.textContent = T().noMissed; ul.appendChild(li); }
+  state.missed.forEach(q => {
+    const li = document.createElement("li");
+    const ctx = (q.context || []).map(c => `“${c.text}”`).join(" ");
+    li.textContent = `${txt(q.q)} ${ctx ? ctx + " " : ""}→ ${txt(q.options[q.answer])}`;
+    ul.appendChild(li);
+  });
+}
+
+/* ---------- boot ---------- */
+if (!DATA) {
+  document.body.innerHTML = '<div class="wrap"><div class="card"><h3>No data</h3><p>Run <code>python3 build.py data/_chat.txt</code> to generate dist/index.html.</p></div></div>';
+} else {
+  loadPrefs();
+  initStart();
+  applyLang();
+}
+</script>
+</body>
+</html>

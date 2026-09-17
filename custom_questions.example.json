@@ -1,0 +1,16 @@
+[
+  {
+    "q": {"az": "İlk görüşümüz harada olub?", "en": "Where was our first date?"},
+    "options": ["Bulvar", "Kino", "Kafe", "Park"],
+    "answer": 2,
+    "reveal": {"az": "Kafe, və sən 20 dəqiqə gecikdin.", "en": "The cafe, and you were 20 minutes late."},
+    "about": "both"
+  },
+  {
+    "q": "Nərgizin ən sevdiyi yemək hansıdır?",
+    "options": ["Dolma", "Plov", "Pizza", "Suşi"],
+    "answer": 1,
+    "reveal": "Plov. Həmişə.",
+    "about": "Nərgiz"
+  }
+]

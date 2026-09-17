@@ -1,0 +1,6 @@
+# Private chat export and anything generated from it
+data/
+dist/
+*.zip
+_chat.txt
+__pycache__/
