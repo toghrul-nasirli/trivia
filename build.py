@@ -1084,7 +1084,7 @@ def wrapped_data(msgs, names, display):
     }
 
 
-def load_custom(path, display):
+def load_custom(path, display, kind="custom"):
     if not path or not Path(path).exists():
         return []
     items = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -1095,8 +1095,97 @@ def load_custom(path, display):
         rev = it.get("reveal", "")
         rev = rev if isinstance(rev, dict) else bi(rev, rev)
         about = it.get("about", "both")
-        qs.append(mc("custom", q, opts, int(it["answer"]), rev, about=about))
+        item = mc(kind, q, opts, int(it["answer"]), rev, about=about)
+        if it.get("context"):
+            item["context"] = [c if isinstance(c, dict) else {"text": c} for c in it["context"]]
+        if it.get("date"):
+            item["date"] = it["date"]
+        qs.append(item)
     return qs
+
+
+# ----------------------------------------------------------------------------
+# Photo round (needs an export "With media": lines like "<attached: 00000123-PHOTO-2024-05-18-12-00-00.jpg>")
+# ----------------------------------------------------------------------------
+
+ATTACHED_RE = re.compile(r"<attached: ([^>]+\.(?:jpe?g|png|webp))>", re.I)
+
+
+def photo_questions(rng, msgs, names, display, media_dir, n=60, max_px=640):
+    if not media_dir:
+        return []
+    media = Path(media_dir)
+    if not media.is_dir():
+        print(f"warning: media dir {media} not found, skipping photo round")
+        return []
+    try:
+        from PIL import Image
+    except ImportError:
+        print("warning: photo round needs Pillow (pip install pillow), skipping")
+        return []
+    import io
+    a, b = names
+    cands = []
+    for m in msgs:
+        mt = ATTACHED_RE.search(m["raw"])
+        if mt and (media / mt.group(1)).exists():
+            cands.append((m, media / mt.group(1)))
+    rng.shuffle(cands)
+    months = sorted({(m["ts"].year, m["ts"].month) for m in msgs})
+    qs = []
+    for m, path in cands:
+        if len(qs) >= n:
+            break
+        try:
+            img = Image.open(path)
+            img = img.convert("RGB")
+            img.thumbnail((max_px, max_px))
+            buf = io.BytesIO()
+            img.save(buf, "JPEG", quality=72, optimize=True)
+            data_uri = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+        except Exception as e:  # unreadable file
+            continue
+        k = (m["ts"].year, m["ts"].month)
+        others = [x for x in months if abs((x[0] - k[0]) * 12 + x[1] - k[1]) >= 2]
+        m_opts = [k] + rng.sample(others, min(3, len(others)))
+        rng.shuffle(m_opts)
+        if rng.random() < 0.5:
+            qs.append(mc("photo", bi("Bu şəkil hansı ayda göndərilib?", "In which month was this photo sent?"),
+                [bi(f"{AZ_MONTHS[mo - 1]} {y}", f"{EN_MONTHS[mo - 1]} {y}") for y, mo in m_opts], m_opts.index(k),
+                bi(f"{az_date(m['ts'].date())}, göndərən: {display[m['sender']]}.", f"{en_date(m['ts'].date())}, sent by {display[m['sender']]}."),
+                context=[{"image": data_uri}]))
+        else:
+            qs.append(mc("photo", bi("Bu şəkli kim göndərib?", "Who sent this photo?"),
+                [bi(display[a], display[a]), bi(display[b], display[b])], 0 if m["sender"] == a else 1,
+                bi(f"{display[m['sender']]}, {az_date(m['ts'].date())}.", f"{display[m['sender']]}, on {en_date(m['ts'].date())}."),
+                context=[{"image": data_uri}]))
+    return qs
+
+
+# ----------------------------------------------------------------------------
+# "This day in our history": for every calendar day, a few quotable messages per year
+# ----------------------------------------------------------------------------
+
+def on_this_day(rng, msgs, names, display, per_year=3):
+    by_key = collections.defaultdict(list)
+    counts = collections.Counter()
+    for m in msgs:
+        counts[m["ts"].date()] += 1
+    for m in msgs:
+        if quotable(m) and 20 <= len(m["text"]) <= 120 and "\n" not in m["text"] and m["text"].count(" ") >= 3:
+            by_key[(m["ts"].month, m["ts"].day, m["ts"].year)].append(m)
+    out = {}
+    for (mo, d, y), ms in by_key.items():
+        picks = rng.sample(ms, min(per_year, len(ms)))
+        picks.sort(key=lambda m: m["ts"])
+        out.setdefault(f"{mo:02d}-{d:02d}", []).append({
+            "year": y,
+            "count": counts[dt.date(y, mo, d)],
+            "msgs": [{"sender": display[m["sender"]], "text": m["text"], "time": m["ts"].strftime("%H:%M")} for m in picks],
+        })
+    for v in out.values():
+        v.sort(key=lambda e: e["year"])
+    return out
 
 
 # ----------------------------------------------------------------------------
@@ -1219,6 +1308,9 @@ def main():
     ap.add_argument("--out", default="dist/index.html")
     ap.add_argument("--template", default="template/index.html")
     ap.add_argument("--custom", default="data/custom_questions.json")
+    ap.add_argument("--memory", default="data/memory_questions.json",
+                    help="hand-written questions about real moments (round: Xatirələr)")
+    ap.add_argument("--media", default=None, help='folder of a "With media" export; enables the photo round')
     ap.add_argument("--exclude", default="data/exclude.txt",
                     help="one word/phrase per line; messages containing them are never quoted")
     ap.add_argument("--rename", action="append", default=[], help='"raw name=Display name"')
@@ -1261,6 +1353,8 @@ def main():
         "speed": reply_time_questions(rng, msgs, names, display),
         "nick": nickname_questions(rng, msgs, names, display, wc),
         "streak": streak_questions(rng, msgs, names, display),
+        "memory": load_custom(args.memory, display, kind="memory"),
+        "photo": photo_questions(rng, msgs, names, display, args.media),
         "custom": load_custom(args.custom, display),
     }
     # 'about' uses raw sender names internally; convert to display names for the app
@@ -1281,6 +1375,7 @@ def main():
         },
         "pools": pools,
         "wrapped": wrapped_data(msgs, names, display),
+        "onThisDay": on_this_day(rng, msgs, names, display),
     }
     template = Path(args.template).read_text(encoding="utf-8")
     payload = json.dumps(data, ensure_ascii=False)

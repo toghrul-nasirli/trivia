@@ -33,6 +33,8 @@ Requires Python 3.8+, no dependencies (encryption is pure standard library).
 | Cavab sürəti | A message and its reply, guess how long the reply took |
 | Əzizləmə sözləri | Pet names: who says which one more, who said it first |
 | Rekordlar | Longest monologue, day streak, sticker volley, fastest 10 minutes |
+| Xatirələr | Hand-written questions about real moments, from `data/memory_questions.json` |
+| Şəkillər | Photos from a "With media" export: who sent it, which month (needs Pillow) |
 | Xüsusi suallar | Your own hand-written questions |
 
 Questions are drawn randomly from the pools every game, so replays differ.
@@ -59,6 +61,29 @@ weekday-by-hour heatmap, "sevirəm" over time, what each person sends, favourite
 and the busiest days. It uses aggregated counts only, no message text.
 
 UI is in Azerbaijani with an English toggle. Light and dark theme.
+
+## This day in our history
+
+The start screen shows a few real messages from today's date in earlier years, with
+the message count for that day. It is generated for every calendar day at build time.
+
+## Photo round
+
+Export the chat once more **With media**, unzip it, and pass the folder:
+
+```bash
+pip install pillow
+python3 build.py data/_chat.txt --media data/media_export/ --password "..." --out dist/public/index.html
+```
+
+Photos are downscaled to 640px and embedded in the page, 60 by default.
+
+## Memory questions
+
+`data/memory_questions.json` holds hand-written questions about real moments, in the
+same format as custom questions. They appear as the "Xatirələr" round and are
+weighted heavily, so most games include several. The file is gitignored because it
+quotes the chat.
 
 ## Custom questions
 

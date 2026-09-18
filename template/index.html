@@ -94,6 +94,13 @@
   .bubble.anon { align-self: stretch; max-width: 100%; text-align: center; font-size: 18px; padding: 16px; font-style: italic; }
   .bubble.emoji { font-size: 34px; font-style: normal; line-height: 1.3; }
   .bubble.hiddenReply { filter: blur(6px); user-select: none; }
+  .bubble.photo { align-self: stretch; max-width: 100%; padding: 0; overflow: hidden; background: transparent; }
+  .bubble.photo img { display: block; width: 100%; max-height: 380px; object-fit: contain; border-radius: 14px; background: var(--bg2); }
+  .otd .yr { font-size: 12px; font-weight: 800; color: var(--accent); margin: 10px 0 6px; letter-spacing: .5px; }
+  .otd .yr:first-child { margin-top: 0; }
+  .otd .bubble { font-size: 14px; padding: 8px 12px; max-width: 100%; }
+  .otd .bubble .from { display: inline; margin-right: 6px; }
+  .otd .bubble .tm { float: right; color: var(--muted); font-size: 11px; margin-left: 8px; }
   .wager { display: none; margin-bottom: 12px; }
   .wager.show { display: block; }
   .wager .lbl { font-size: 13px; color: var(--muted); font-weight: 700; margin-bottom: 6px; }
@@ -194,6 +201,11 @@
         <div><b id="mQs"></b><span data-i18n="mQs">sual bankı</span></div>
       </div>
       <p class="help" id="mRange"></p>
+    </div>
+
+    <div class="card otd hidden" id="otdCard">
+      <h3 data-i18n="otd">Bu gün tarixdə</h3>
+      <div id="otdBody"></div>
     </div>
 
     <div class="card">
@@ -346,7 +358,9 @@ const I18N = {
     winner: "qalib gəldi!", tie: "Bərabərlik!", coopTitle: "Nəticəniz", of: "/", noMissed: "Heç bir səhv yoxdur. Bir-birinizi əzbər bilirsiniz.",
     range: "{from} — {to}", built: "Söhbət ixracından yerli olaraq yaradılıb. Heç bir məlumat heç yerə göndərilmir.",
     kinds: { stats: "Statistika", who: "Kim yazıb?", blank: "Boşluğu doldur", reply: "Cavab nə olub?", word: "Bu söz kimindir?", day: "Hansı gün olub?",
-             emoji: "Emoji mesajı", voice: "Səsli mesajlar", speed: "Cavab sürəti", nick: "Əzizləmə sözləri", streak: "Rekordlar", custom: "Xüsusi suallar" },
+             emoji: "Emoji mesajı", voice: "Səsli mesajlar", speed: "Cavab sürəti", nick: "Əzizləmə sözləri", streak: "Rekordlar",
+             memory: "Xatirələr", photo: "Şəkillər", custom: "Xüsusi suallar" },
+    otd: "Bu gün tarixdə", otdYear: (y, n) => `${y} · ${n} mesaj`, otdNone: "Bu gün üçün mesaj yoxdur.",
     verdicts: [[90, "Bir-birinizi əzbər bilirsiniz 😍"], [70, "Çox yaxşı tanıyırsınız 💕"], [50, "Pis deyil, amma söhbətləri bir də oxuyun 😅"], [0, "Hmm… bəlkə səsli mesajlara daha çox qulaq asaq? 🙈"]],
     wMonthly: "Aylar üzrə mesajlar", wVoice: "Aylar üzrə səsli mesajlar", wHeat: "Həftənin günü × saat", wHeatHelp: "Nə qədər tünd, o qədər çox mesaj.",
     wLove: "«Sevirəm» aylar üzrə", wKinds: "Nə göndəririk", wEmoji: "Sevimli emojilər", wTopDays: "Ən aktiv günlər",
@@ -371,7 +385,9 @@ const I18N = {
     winner: "wins!", tie: "It's a tie!", coopTitle: "Your score", of: "/", noMissed: "No mistakes. You know each other by heart.",
     range: "{from} — {to}", built: "Built locally from a chat export. Nothing is sent anywhere.",
     kinds: { stats: "Statistics", who: "Who said it?", blank: "Fill the blank", reply: "What was the reply?", word: "Whose word is it?", day: "Which day was it?",
-             emoji: "Emoji message", voice: "Voice notes", speed: "Reply time", nick: "Pet names", streak: "Records", custom: "Custom questions" },
+             emoji: "Emoji message", voice: "Voice notes", speed: "Reply time", nick: "Pet names", streak: "Records",
+             memory: "Memories", photo: "Photos", custom: "Custom questions" },
+    otd: "This day in our history", otdYear: (y, n) => `${y} · ${n} messages`, otdNone: "No messages on this day.",
     verdicts: [[90, "You know each other by heart 😍"], [70, "You know each other very well 💕"], [50, "Not bad, but maybe re-read the chat 😅"], [0, "Hmm… maybe listen to the voice notes more? 🙈"]],
     wMonthly: "Messages per month", wVoice: "Voice notes per month", wHeat: "Weekday × hour", wHeatHelp: "Darker means more messages.",
     wLove: "“Sevirəm” per month", wKinds: "What we send", wEmoji: "Favourite emoji", wTopDays: "Busiest days",
@@ -473,6 +489,7 @@ function applyLang() {
   $("mRange").textContent = T().range.replace("{from}", txt(DATA.meta.from)).replace("{to}", txt(DATA.meta.to));
   $("builtNote").textContent = T().built;
   renderKindChips();
+  renderOnThisDay();
   if (state.screen === "play") renderQuestion(true);
   if (state.screen === "end") renderEnd(true);
   if (state.screen === "wrapped") renderWrapped();
@@ -529,12 +546,36 @@ function bindChrome() {
   });
 }
 
+function renderOnThisDay() {
+  const card = $("otdCard"), body = $("otdBody");
+  const otd = DATA.onThisDay;
+  if (!otd) { card.classList.add("hidden"); return; }
+  const now = new Date();
+  const key = `${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const entries = (otd[key] || []).filter(e => e.year < now.getFullYear());
+  if (!entries.length) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+  body.innerHTML = "";
+  entries.forEach(e => {
+    const h = document.createElement("div"); h.className = "yr"; h.textContent = T().otdYear(e.year, fmtN(e.count)); body.appendChild(h);
+    const wrap = document.createElement("div"); wrap.className = "bubbles";
+    e.msgs.forEach(m => {
+      const b = document.createElement("div"); b.className = "bubble";
+      const f = document.createElement("span"); f.className = "from"; f.textContent = m.sender; b.appendChild(f);
+      b.appendChild(document.createTextNode(m.text));
+      const t = document.createElement("span"); t.className = "tm"; t.textContent = m.time; b.appendChild(t);
+      wrap.appendChild(b);
+    });
+    body.appendChild(wrap);
+  });
+}
+
 /* ---------- game ---------- */
 function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 
 function pickQuestions() {
   const kinds = [...state.kinds].filter(k => DATA.pools[k] && DATA.pools[k].length);
-  const weights = { stats: 3, who: 3, blank: 2, reply: 2, word: 1.5, day: 1.5, emoji: 2, voice: 1.5, speed: 1.5, nick: 1.5, streak: 1, custom: 4 };
+  const weights = { stats: 3, who: 3, blank: 2, reply: 2, word: 1.5, day: 1.5, emoji: 2, voice: 1.5, speed: 1.5, nick: 1.5, streak: 1, memory: 4, photo: 2, custom: 4 };
   const totalW = kinds.reduce((s, k) => s + (weights[k] || 1), 0);
   let picked = [];
   const leftovers = [];
@@ -613,6 +654,11 @@ function renderQuestion(rerenderOnly) {
   bubbles.innerHTML = "";
   (q.context || []).forEach((c, idx) => {
     const d = document.createElement("div");
+    if (c.image) {
+      d.className = "bubble photo";
+      const im = document.createElement("img"); im.src = c.image; im.alt = ""; d.appendChild(im);
+      bubbles.appendChild(d); return;
+    }
     d.className = "bubble" + (c.sender ? "" : " anon") + (q.kind === "emoji" ? " emoji" : "");
     if (c.sender) { const f = document.createElement("span"); f.className = "from"; f.textContent = c.sender; d.appendChild(f); }
     d.appendChild(document.createTextNode(c.text));
